@@ -8,7 +8,7 @@ import threading
 
 # --- Configuration Constants ---
 DB_NAME = "maintenance_data.db"
-MQTT_BROKER = "e17bb346f90b432a9d629ddf306a9b11.s1.eu.hivemq.cloud" 
+MQTT_BROKER = "e17bb346f90b432a9d6298ddf306a9b1.s1.eu.hivemq.cloud" 
 MQTT_PORT = 8883
 MQTT_USER = "vijay123"
 MQTT_PASS = "Vk@217959"
