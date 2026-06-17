@@ -16,8 +16,7 @@ st.set_page_config(
 st.title("🏭 Industry 4.0 Real-Time Machine Health Monitor")
 st.markdown("Automated edge telemetry capture, anomaly alerting, and multi-day data persistence.")
 
-# --- 2. Automatically Refresh the Page Every 2 Seconds ---
-# This safely triggers a clean rerun of the script, updating data without ID duplication errors.
+# --- 2. Automated Safe Background UI Refresh (Every 2 Seconds) ---
 st_autorefresh(interval=2000, key="vibration_data_refresh")
 
 DB_NAME = "cloud_factory.db"
@@ -32,7 +31,7 @@ def init_db():
 
 init_db()
 
-# --- 4. Persistent MQTT Background Client ---
+# --- 4. MQTT Broker Message Processing ---
 def on_message(client, userdata, msg):
     try:
         payload = json.loads(msg.payload.decode())
@@ -47,10 +46,13 @@ def on_message(client, userdata, msg):
     except Exception as e:
         pass
 
+# --- 5. Persistent Background MQTT Client with Secrets Vault ---
 if 'mqtt_connected' not in st.session_state:
     client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
-    client.username_pw_set("admin1", "Vk@217959") 
-    client.tls_set() 
+    
+    # 🔐 Credentials pulled safely from Streamlit App Settings -> Secrets
+    client.username_pw_set(st.secrets["MQTT_USER"], st.secrets["MQTT_PASS"]) 
+    client.tls_set() # Activates encryption
     client.on_message = on_message
     
     try:
@@ -61,53 +63,53 @@ if 'mqtt_connected' not in st.session_state:
     except Exception as e:
         st.error(f"Failed to connect to cloud broker: {e}")
 
-# --- 5. Data Fetching ---
+# --- 6. Fetch Historical Logs ---
 def get_historical_data(limit=100):
     conn = sqlite3.connect(DB_NAME)
     df = pd.read_sql_query(f"SELECT * FROM logs ORDER BY timestamp DESC LIMIT {limit}", conn)
     conn.close()
     if not df.empty:
-        df = df.iloc[::-1] # Order oldest to newest for visual timelines
+        df = df.iloc[::-1] # Ensure chronological order for time-series charts
     return df
 
-# --- 6. Render Layout ---
+# --- 7. UI Dashboard Layout Rendering ---
 df_logs = get_historical_data(limit=100)
 
 if not df_logs.empty:
     latest_record = df_logs.iloc[-1]
     machine_status = latest_record['status']
     
-    # 🚨 Live Alert Banner
+    # 🚨 Live Alert Banner Box
     if machine_status == "ANOMALY":
-        st.error(f"⚠️ CRITICAL FAULT WARNING: High vibration detected at {latest_record['timestamp']}! Inspect machine bearing immediately.")
+        st.error(f"⚠️ CRITICAL FAULT WARNING: High vibration detected at {latest_record['timestamp']}! Inspect system hardware immediately.")
     else:
         st.success("🟢 SYSTEM STATE HEALTHY: Normal rotational harmonics detected.")
     
     st.markdown("### 📈 Live Telemetry Summary")
     
-    # Metric KPI Display
+    # Operational Metric Cards
     col1, col2, col3 = st.columns(3)
-    col1.metric("Current Vibration Pulse Count", f"{int(latest_record['vibration_intensity'])} Shakes / 5s")
+    col1.metric("Current Vibration Intensity", f"{int(latest_record['vibration_intensity'])} Pulses / 5s")
     col2.metric("System Evaluation Status", str(machine_status))
     col3.metric("Last Data Update Time", str(latest_record['timestamp'].split(" ")[1]))
     
     st.markdown("---")
     
-    # Interactive Timeline Visualization Chart
+    # Render Interactive Plotly Trend Graphic
     fig = px.line(
         df_logs, 
         x='timestamp', 
         y='vibration_intensity', 
-        title="Continuous Machine Vibe Frequency Log Trend",
+        title="Continuous Machine Vibration Frequency Log Trend",
         markers=True
     )
     fig.update_traces(line_color='#FF4B4B' if machine_status == "ANOMALY" else '#00CC96')
     fig.update_layout(xaxis_title="Time Logged", yaxis_title="Pulses (Intensity)")
     st.plotly_chart(fig, use_container_width=True)
     
-    # Raw Data Log Table View for daily audits
+    # Data Log Table Dropdown
     with st.expander("📋 View Daily Data Log Table"):
         st.dataframe(df_logs[['timestamp', 'vibration_intensity', 'status']].tail(20), use_container_width=True)
         
 else:
-    st.info("📡 Connecting to live stream... Shaking your hardware sensor will push data immediately.")
+    st.info("📡 Connecting to cloud stream... Shake your hardware sensor to trigger real-time graph visualization.")
