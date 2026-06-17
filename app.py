@@ -4,76 +4,122 @@ import sqlite3
 import pandas as pd
 import plotly.express as px
 import json
+import time
 from datetime import datetime
 
-# Streamlit Page Setup
-st.set_page_config(page_title="IIoT Predictive Maintenance", layout="wide")
-st.title("🏭 Cloud Industry 4.0 Machine Health Monitor")
-st.markdown("Predictive maintenance tracking via secure MQTT and digital vibration metrics.")
+# --- 1. Page Configuration & Professional Styling ---
+st.set_page_config(
+    page_title="IIoT Predictive Maintenance Panel", 
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+st.title("🏭 Industry 4.0 Real-Time Machine Health Monitor")
+st.markdown("Automated edge telemetry capture, anomaly alerting, and multi-day data persistence.")
 
 DB_NAME = "cloud_factory.db"
 
-# Initialize Local Storage Database inside Streamlit Server Instance
+# --- 2. SQL Database Setup (Stores full date and time for historical view) ---
 def init_db():
     conn = sqlite3.connect(DB_NAME)
+    # Using DATETIME type to preserve full historical tracking records over days
     conn.execute('''CREATE TABLE IF NOT EXISTS logs 
-                    (timestamp TEXT, vibration REAL, status TEXT)''')
+                    (timestamp TEXT, vibration_intensity INTEGER, status TEXT)''')
     conn.commit()
     conn.close()
 
 init_db()
 
-# Callback logic when data hits HiveMQ Cloud
+# --- 3. Persistent MQTT Background Thread (Runs 24/7 in background) ---
 def on_message(client, userdata, msg):
     try:
         payload = json.loads(msg.payload.decode())
+        # Capture current time down to the second
+        current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
         cursor.execute("INSERT INTO logs VALUES (?, ?, ?)", 
-                       (datetime.now().strftime('%H:%M:%S'), payload['vibration_intensity'], payload['status']))
+                       (current_time, int(payload['vibration_intensity']), payload['status']))
         conn.commit()
         conn.close()
     except Exception as e:
         pass
 
-# Maintain a persistent background MQTT thread across Streamlit reruns
 if 'mqtt_connected' not in st.session_state:
     client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
     client.username_pw_set("admin1", "Vk@217959") 
-    client.tls_set() # Activates required TLS encryption for port 8883
+    client.tls_set() # Crucial for secure TLS connection to port 8883
     client.on_message = on_message
     
-    client.connect("e17bb346f90b432a9d6298ddf306a9b1.s1.eu.hivemq.cloud", 8883, 60)
-    client.subscribe("factory/machine1/vibration")
-    client.loop_start()
-    st.session_state['mqtt_connected'] = True
+    try:
+        client.connect("e17bb346f90b432a9d6298ddf306a9b1.s1.eu.hivemq.cloud", 8883, 60)
+        client.subscribe("factory/machine1/vibration")
+        client.loop_start()
+        st.session_state['mqtt_connected'] = True
+    except Exception as e:
+        st.error(f"Failed to connect to cloud broker: {e}")
 
-# Read past history trends from local SQLite
-conn = sqlite3.connect(DB_NAME)
-df = pd.read_sql_query("SELECT * FROM logs ORDER BY timestamp DESC LIMIT 50", conn)
-conn.close()
+# --- 4. Sidebar Controls for Historical Inspection ---
+st.sidebar.header("🗓️ Historical Logs Filter")
+st.sidebar.markdown("Use this panel to look at specific daily trends stored in the database.")
 
-if not df.empty:
-    df = df.iloc[::-1] # Sort chronologically for timeline display
-    
-    # Industrial Layout Design: Main UI KPI Cards
-    col1, col2 = st.columns(2)
-    col1.metric("Latest Vibration Frequency", f"{int(df.iloc[-1]['vibration'])} Pulses / 5s")
-    
-    status_val = df.iloc[-1]['status']
-    if status_val == "ANOMALY":
-        col2.error(f"⚠️ Critical System Anomaly Detected")
-    else:
-        col2.success(f"✅ Machine Operation Stable")
-    
-    st.markdown("---")
-    
-    # Render Interactive Plotly Trend Graphic
-    fig = px.line(df, x='timestamp', y='vibration', title="Vibration Frequency Intensity (Historical Log Graph)")
-    fig.update_traces(line_color='#29B5E8' if status_val == "NORMAL" else '#FF4B4B')
-    st.plotly_chart(fig, use_container_width=True)
-else:
-    st.warning("🔄 System Online. Awaiting automated telemetry updates from NodeMCU Edge Device...")
+# Fetch data for rendering
+def get_historical_data(limit=100):
+    conn = sqlite3.connect(DB_NAME)
+    df = pd.read_sql_query(f"SELECT * FROM logs ORDER BY timestamp DESC LIMIT {limit}", conn)
+    conn.close()
+    if not df.empty:
+        df = df.iloc[::-1] # Arrange chronologically for charts
+    return df
 
-if st.button("🔄 Refresh Telemetry Dashboard"):
-    st.rerun()
+# --- 5. Main Dashboard Container (Auto-Refreshes Continous View) ---
+main_ui_container = st.empty()
+
+# Dynamic streaming display loop
+while True:
+    df_logs = get_historical_data(limit=100)
+    
+    with main_ui_container.container():
+        if not df_logs.empty:
+            latest_record = df_logs.iloc[-1]
+            machine_status = latest_record['status']
+            
+            # 🚨 LIVE ALERT BANNER: Immediate visual confirmation of failure states
+            if machine_status == "ANOMALY":
+                st.error(f"⚠️ CRITICAL FAULT WARNING: High vibration detected at {latest_record['timestamp']}! Inspect machine bearing immediately.")
+            else:
+                st.success("🟢 SYSTEM STATE HEALTHY: Normal rotational harmonics detected.")
+            
+            st.markdown("### 📈 Live Telemetry Summary")
+            
+            # Metric Card Display
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Current Vibration Pulse Count", f"{int(latest_record['vibration_intensity'])} Shakes / 5s")
+            col2.metric("System Evaluation Status", str(machine_status))
+            col3.metric("Last Data Update Time", str(latest_record['timestamp'].split(" ")[1]))
+            
+            st.markdown("---")
+            
+            # Interactive Timeline Visualization Chart
+            fig = px.line(
+                df_logs, 
+                x='timestamp', 
+                y='vibration_intensity', 
+                title="Continuous Machine Vibe Frequency Log Trend",
+                markers=True
+            )
+            # Switch color dynamically if system enters alarm threshold
+            fig.update_traces(line_color='#FF4B4B' if machine_status == "ANOMALY" else '#00CC96')
+            fig.update_layout(xaxis_title="Time Logged", yaxis_title="Pulses (Intensity)")
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Raw Data Log Table View for daily audits
+            with st.expander("📋 View Daily Data Log Table"):
+                st.dataframe(df_logs[['timestamp', 'vibration_intensity', 'status']].tail(20), use_container_width=True)
+                
+        else:
+            st.warning("📡 Connecting to live stream... Shaking your hardware sensor will push data immediately.")
+            
+    # Interval cooldown before running the next live update fetch
+    time.sleep(2)
